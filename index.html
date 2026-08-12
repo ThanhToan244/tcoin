@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <title>Hệ Thống TCOIN</title>
+    <title>Hệ Thống TCOIN - Xác Nhận Vượt Link</title>
     <style>
         body { font-family: 'Segoe UI', sans-serif; text-align: center; padding-top: 100px; background: #f4f4f9; }
         .box { background: white; padding: 40px; border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); display: inline-block; width: 80%; max-width: 400px; }
@@ -18,60 +18,89 @@
     </div>
 
     <script>
-        // Đường dẫn Database mới của bạn
         const FIREBASE_URL = "https://tcoin-e983b-default-rtdb.firebaseio.com/";
-        
-        const urlParams = new URLSearchParams(window.location.search);
-        const session = urlParams.get('session');
 
-        async function processTcoin() {
-            const statusEl = document.getElementById("status");
-            const loaderEl = document.getElementById("loader");
+        async function processReward() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const sessionId = urlParams.get('session');
+            const statusEl = document.getElementById('status');
+            const loaderEl = document.getElementById('loader');
 
-            if (!session) {
-                statusEl.innerText = "⚠️ Lỗi: Không tìm thấy mã phiên!";
+            if (!sessionId) {
+                statusEl.innerText = "❌ Không tìm thấy mã phiên (Session)!";
                 loaderEl.style.display = "none";
                 return;
             }
 
             try {
-                // 1. Kiểm tra session
-                const res = await fetch(`${FIREBASE_URL}sessions/${session}.json`);
-                const data = await res.json();
+                // 1. Kiểm tra session trên Firebase
+                let res = await fetch(`${FIREBASE_URL}sessions/${sessionId}.json`);
+                let sessionData = await res.json();
 
-                if (!data || data.status === "completed") {
-                    statusEl.innerText = "⚠️ Link này đã được sử dụng!";
+                if (!sessionData) {
+                    statusEl.innerText = "❌ Phiên không tồn tại hoặc đã hết hạn!";
                     loaderEl.style.display = "none";
                     return;
                 }
 
-                // 2. Cộng TCOIN
-                const userId = data.user_id;
-                const reward = data.reward || 20;
-                
-                const userRes = await fetch(`${FIREBASE_URL}users/${userId}.json`);
-                const userData = await userRes.json() || { tcoin: 0 };
-                const newTotal = Number(userData.tcoin || 0) + Number(reward);
+                // CHẶN: Nếu link này đã có ai đó vượt/dùng rồi thì từ chối ngay lập tức
+                if (sessionData.status === "completed") {
+                    statusEl.innerText = "🚫 Link này đã được sử dụng trước đó rồi! Không thể nhận thưởng lần 2.";
+                    loaderEl.style.display = "none";
+                    return;
+                }
+
+                let userId = sessionData.user_id;
+                let reward = sessionData.reward;
+                let webKey = sessionData.web;
+
+                // 2. Khóa session ngay lập tức thành completed để chống spam/dùng lại
+                let updateRes = await fetch(`${FIREBASE_URL}sessions/${sessionId}.json`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ status: "completed" }),
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (!updateRes.ok) {
+                    statusEl.innerText = "❌ Lỗi hệ thống khi xác thực link!";
+                    loaderEl.style.display = "none";
+                    return;
+                }
+
+                // 3. Cộng TCOIN và lưu số lượt vượt trong ngày cho user
+                let userRes = await fetch(`${FIREBASE_URL}users/${userId}.json`);
+                let userData = await userRes.json() || {};
+                let currentTcoin = userData.tcoin || 0;
+                let newTcoin = currentTcoin + reward;
+
+                let todayStr = new Date().toISOString().split('T')[0];
+                let webCount = userData[todayStr] && userData[todayStr][webKey] ? userData[todayStr][webKey] + 1 : 1;
+
+                let userUpdateData = {
+                    tcoin: newTcoin,
+                    [todayStr]: {
+                        ...(userData[todayStr] || {}),
+                        [webKey]: webCount
+                    }
+                };
 
                 await fetch(`${FIREBASE_URL}users/${userId}.json`, {
                     method: 'PATCH',
-                    body: JSON.stringify({ tcoin: newTotal })
+                    body: JSON.stringify(userUpdateData),
+                    headers: { 'Content-Type': 'application/json' }
                 });
 
-                // 3. Đánh dấu đã dùng
-                await fetch(`${FIREBASE_URL}sessions/${session}.json`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({ status: "completed" })
-                });
-
-                statusEl.innerText = `🎉 Chúc mừng! Đã cộng +${reward} TCOIN vào tài khoản của bạn.`;
+                statusEl.innerText = `🎉 Thành công! Đã cộng +${reward} TCOIN vào tài khoản của bạn.`;
                 loaderEl.style.display = "none";
-            } catch (err) {
-                statusEl.innerText = "❌ Lỗi kết nối máy chủ!";
+
+            } catch (error) {
+                console.error(error);
+                statusEl.innerText = "❌ Có lỗi xảy ra trong quá trình xử lý kết nối!";
                 loaderEl.style.display = "none";
             }
         }
-        processTcoin();
+
+        processReward();
     </script>
 </body>
 </html>
