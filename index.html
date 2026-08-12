@@ -43,9 +43,9 @@
                     return;
                 }
 
-                // CHẶN: Nếu link này đã có ai đó vượt/dùng rồi thì từ chối ngay lập tức
+                // Chống spam: Nếu link đã hoàn thành rồi thì chặn ngay
                 if (sessionData.status === "completed") {
-                    statusEl.innerText = "🚫 Link này đã được sử dụng trước đó rồi! Không thể nhận thưởng lần 2.";
+                    statusEl.innerText = "🚫 Link này đã được sử dụng trước đó rồi!";
                     loaderEl.style.display = "none";
                     return;
                 }
@@ -54,34 +54,35 @@
                 let reward = sessionData.reward;
                 let webKey = sessionData.web;
 
-                // 2. Khóa session ngay lập tức thành completed để chống spam/dùng lại
-                let updateRes = await fetch(`${FIREBASE_URL}sessions/${sessionId}.json`, {
+                // 2. Khóa session thành completed
+                await fetch(`${FIREBASE_URL}sessions/${sessionId}.json`, {
                     method: 'PATCH',
                     body: JSON.stringify({ status: "completed" }),
                     headers: { 'Content-Type': 'application/json' }
                 });
 
-                if (!updateRes.ok) {
-                    statusEl.innerText = "❌ Lỗi hệ thống khi xác thực link!";
-                    loaderEl.style.display = "none";
-                    return;
-                }
-
-                // 3. Cộng TCOIN và lưu số lượt vượt trong ngày cho user
+                // 3. Lấy dữ liệu user hiện tại từ Firebase để tính toán chính xác
                 let userRes = await fetch(`${FIREBASE_URL}users/${userId}.json`);
                 let userData = await userRes.json() || {};
+                
                 let currentTcoin = userData.tcoin || 0;
                 let newTcoin = currentTcoin + reward;
 
+                // Lấy ngày hiện tại dạng YYYY-MM-DD theo giờ chuẩn
                 let todayStr = new Date().toISOString().split('T')[0];
-                let webCount = userData[todayStr] && userData[todayStr][webKey] ? userData[todayStr][webKey] + 1 : 1;
+                
+                // Lấy số lượt cũ trong ngày của web đó (nếu chưa có thì mặc định là 0)
+                let todayData = userData[todayStr] || {};
+                let currentWebCount = todayData[webKey] || 0;
+                let newWebCount = currentWebCount + 1;
 
+                // Cập nhật lại số lượt cho đúng ngày và đúng webKey đó
+                todayData[webKey] = newWebCount;
+
+                // 4. Gửi dữ liệu cập nhật tổng lên Firebase
                 let userUpdateData = {
                     tcoin: newTcoin,
-                    [todayStr]: {
-                        ...(userData[todayStr] || {}),
-                        [webKey]: webCount
-                    }
+                    [todayStr]: todayData
                 };
 
                 await fetch(`${FIREBASE_URL}users/${userId}.json`, {
